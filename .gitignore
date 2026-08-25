@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Scratch space AutoSDLC agents write structured output into.
+# Never part of a commit.
+.autosdlc/
+
+# AutoSDLC generates this per run from the context pack.
+CLAUDE.md
