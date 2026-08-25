@@ -2,16 +2,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../src/app.ts';
-import type { LimitStore } from '../src/store.ts';
+import type { ExpenseStore, LimitStore } from '../src/store.ts';
 import type { SpendingLimit } from '../src/types.ts';
 
 let server: Server;
 let limitStore: LimitStore;
+let expenseStore: ExpenseStore;
 let base: string;
 
 beforeAll(async () => {
   const created = createApp();
   limitStore = created.limitStore;
+  expenseStore = created.store;
   server = await new Promise<Server>((resolve) => {
     const s = created.app.listen(0, () => resolve(s));
   });
@@ -21,7 +23,10 @@ beforeAll(async () => {
 
 afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
-beforeEach(() => limitStore.clear());
+beforeEach(() => {
+  limitStore.clear();
+  expenseStore.clear();
+});
 
 /** `fetch().json()` is `unknown` under strict TS; name the shape at the call site. */
 async function readJson<T>(res: Response): Promise<T> {
@@ -69,6 +74,19 @@ describe('PUT /limits/:category', () => {
     expect(limits).toEqual([{ category: 'food', amountCents: 50000 }]);
   });
 
+  it('matches an expense stored under the lowercased category', async () => {
+    await putLimit('FOOD', { amountCents: 50000 });
+    const expense = expenseStore.create({
+      description: 'lunch',
+      amountCents: 1200,
+      category: 'Food',
+      spentOn: '2026-08-20',
+    });
+
+    expect(expense.category).toBe('food');
+    expect(limitStore.get(expense.category)).toEqual({ category: 'food', amountCents: 50000 });
+  });
+
   it('rejects a fractional amount', async () => {
     const res = await putLimit('food', { amountCents: 12.5 });
     expect(res.status).toBe(400);
@@ -113,5 +131,19 @@ describe('DELETE /limits/:category', () => {
     expect((await deleteLimit('food')).status).toBe(204);
     expect((await deleteLimit('food')).status).toBe(404);
     expect(limitStore.size).toBe(0);
+  });
+
+  it('deletes regardless of the case used', async () => {
+    await putLimit('food', { amountCents: 50000 });
+
+    expect((await deleteLimit('FOOD')).status).toBe(204);
+    expect(limitStore.size).toBe(0);
+  });
+
+  it('404s for a category that was never set', async () => {
+    const res = await deleteLimit('nonexistent');
+    expect(res.status).toBe(404);
+    const body = await readJson<{ error: string }>(res);
+    expect(body.error).toBeDefined();
   });
 });
