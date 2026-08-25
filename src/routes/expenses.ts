@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { ExpenseStore } from '../store.ts';
-import { ExpenseQuerySchema, NewExpenseSchema } from '../types.ts';
+import { ExpenseQuerySchema, ExpenseSummaryQuerySchema, NewExpenseSchema } from '../types.ts';
 
 export function expensesRouter(store: ExpenseStore): Router {
   const router = Router();
@@ -19,6 +19,14 @@ export function expensesRouter(store: ExpenseStore): Router {
       return res.status(400).json({ error: 'invalid query', details: parsed.error.issues });
     }
     return res.json({ expenses: store.list(parsed.data) });
+  });
+
+  router.get('/summary', (req, res) => {
+    const parsed = ExpenseSummaryQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'invalid query', details: parsed.error.issues });
+    }
+    return res.json({ totals: store.summary(parsed.data) });
   });
 
   router.get('/:id', (req, res) => {
