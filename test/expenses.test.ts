@@ -107,6 +107,48 @@ describe('GET /expenses', () => {
   });
 });
 
+describe('GET /expenses/summary', () => {
+  const DINNER = { description: 'Dinner', amountCents: 1000, category: 'food', spentOn: '2026-08-20' };
+
+  function summary(query = ''): Promise<Response> {
+    return fetch(`${base}/expenses/summary${query}`);
+  }
+
+  it('returns an empty totals array when there are no expenses', async () => {
+    const res = await summary();
+    expect(res.status).toBe(200);
+    await expect(readJson(res)).resolves.toEqual({ totals: [] });
+  });
+
+  it('aggregates totals by category, sorted by totalCents descending', async () => {
+    await post(LUNCH);
+    await post(TAXI);
+    await post(DINNER);
+
+    const { totals } = await readJson<{ totals: { category: string; totalCents: number; count: number }[] }>(
+      await summary(),
+    );
+
+    expect(totals).toEqual([
+      { category: 'food', totalCents: 5250, count: 2 },
+      { category: 'travel', totalCents: 3100, count: 1 },
+    ]);
+  });
+
+  it('filters by date range inclusively', async () => {
+    await post(LUNCH);
+    await post(TAXI);
+
+    const res = await summary('?from=2026-08-14&to=2026-08-14');
+    const { totals } = await readJson<{ totals: { category: string; totalCents: number; count: number }[] }>(res);
+    expect(totals).toEqual([{ category: 'travel', totalCents: 3100, count: 1 }]);
+  });
+
+  it('rejects a malformed date filter', async () => {
+    expect((await summary('?from=yesterday')).status).toBe(400);
+  });
+});
+
 describe('GET /expenses/:id', () => {
   it('returns the expense', async () => {
     const created = await createExpense(LUNCH);

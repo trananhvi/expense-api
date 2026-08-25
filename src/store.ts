@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Expense, ExpenseQuery, NewExpense } from './types.ts';
+import type { CategoryTotal, Expense, ExpenseQuery, ExpenseSummaryQuery, NewExpense } from './types.ts';
 
 /**
  * In-memory expense storage.
@@ -38,6 +38,20 @@ export class ExpenseStore {
       .filter((e) => (query.from ? e.spentOn >= query.from : true))
       .filter((e) => (query.to ? e.spentOn <= query.to : true))
       .sort((a, b) => b.spentOn.localeCompare(a.spentOn) || b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** Totals per category for the given date range, sorted by totalCents descending. */
+  summary(query: ExpenseSummaryQuery = {}): CategoryTotal[] {
+    const totals = new Map<string, { totalCents: number; count: number }>();
+    for (const expense of this.list(query)) {
+      const entry = totals.get(expense.category) ?? { totalCents: 0, count: 0 };
+      entry.totalCents += expense.amountCents;
+      entry.count += 1;
+      totals.set(expense.category, entry);
+    }
+    return [...totals.entries()]
+      .map(([category, { totalCents, count }]) => ({ category, totalCents, count }))
+      .sort((a, b) => b.totalCents - a.totalCents);
   }
 
   clear(): void {

@@ -28,3 +28,13 @@ export const ExpenseQuerySchema = z.object({
 });
 
 export type ExpenseQuery = z.infer<typeof ExpenseQuerySchema>;
+
+export const ExpenseSummaryQuerySchema = ExpenseQuerySchema.pick({ from: true, to: true });
+
+export type ExpenseSummaryQuery = z.infer<typeof ExpenseSummaryQuerySchema>;
+
+export interface CategoryTotal {
+  category: string;
+  totalCents: number;
+  count: number;
+}
