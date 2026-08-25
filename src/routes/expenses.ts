@@ -2,6 +2,13 @@ import { Router } from 'express';
 import type { ExpenseStore } from '../store.ts';
 import { ExpenseQuerySchema, NewExpenseSchema } from '../types.ts';
 
+const CSV_HEADER = 'id,description,amountCents,category,spentOn,createdAt';
+
+/** Quotes and escapes a field per RFC 4180 if it contains a comma, quote, or newline. */
+function csvField(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
 export function expensesRouter(store: ExpenseStore): Router {
   const router = Router();
 
@@ -19,6 +26,19 @@ export function expensesRouter(store: ExpenseStore): Router {
       return res.status(400).json({ error: 'invalid query', details: parsed.error.issues });
     }
     return res.json({ expenses: store.list(parsed.data) });
+  });
+
+  router.get('/export.csv', (req, res) => {
+    const parsed = ExpenseQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'invalid query', details: parsed.error.issues });
+    }
+    const rows = store.list(parsed.data).map((e) =>
+      [e.id, e.description, String(e.amountCents), e.category, e.spentOn, e.createdAt].map(csvField).join(','),
+    );
+    const body = [CSV_HEADER, ...rows].map((line) => `${line}\n`).join('');
+    res.setHeader('Content-Type', 'text/csv');
+    return res.send(body);
   });
 
   router.get('/:id', (req, res) => {
