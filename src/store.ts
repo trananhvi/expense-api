@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Expense, ExpenseQuery, NewExpense } from './types.ts';
+import type { Expense, ExpenseQuery, NewExpense, SpendingLimit } from './types.ts';
 
 /**
  * In-memory expense storage.
@@ -46,5 +46,42 @@ export class ExpenseStore {
 
   get size(): number {
     return this.#byId.size;
+  }
+}
+
+/**
+ * In-memory spending limit storage.
+ *
+ * Pure and synchronous, mirroring `ExpenseStore`'s shape: nothing here throws
+ * for a missing record — callers get `undefined` or `false` and decide what
+ * that means (CONVENTIONS.md rule 2).
+ */
+export class LimitStore {
+  readonly #byCategory = new Map<string, SpendingLimit>();
+
+  set(category: string, amountCents: number): SpendingLimit {
+    const limit: SpendingLimit = { category: category.toLowerCase(), amountCents };
+    this.#byCategory.set(limit.category, limit);
+    return limit;
+  }
+
+  get(category: string): SpendingLimit | undefined {
+    return this.#byCategory.get(category.toLowerCase());
+  }
+
+  delete(category: string): boolean {
+    return this.#byCategory.delete(category.toLowerCase());
+  }
+
+  list(): SpendingLimit[] {
+    return [...this.#byCategory.values()];
+  }
+
+  clear(): void {
+    this.#byCategory.clear();
+  }
+
+  get size(): number {
+    return this.#byCategory.size;
   }
 }

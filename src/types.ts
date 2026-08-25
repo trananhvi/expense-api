@@ -28,3 +28,14 @@ export const ExpenseQuerySchema = z.object({
 });
 
 export type ExpenseQuery = z.infer<typeof ExpenseQuerySchema>;
+
+export const NewLimitSchema = z.object({
+  /** Integer cents. Never a float — see CONVENTIONS.md rule 3. */
+  amountCents: z.number().int().positive(),
+});
+
+export type NewLimit = z.infer<typeof NewLimitSchema>;
+
+export interface SpendingLimit extends NewLimit {
+  category: string;
+}
