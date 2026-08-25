@@ -1,0 +1,8 @@
+# Keep LF in the working tree on every platform.
+# Agents write LF; without this, Windows checkouts turn every agent-authored
+# file into a whole-file diff and code review becomes useless.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
