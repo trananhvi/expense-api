@@ -107,6 +107,82 @@ describe('GET /expenses', () => {
   });
 });
 
+describe('GET /expenses/export.csv', () => {
+  it('returns just the header row when there are no expenses', async () => {
+    const res = await fetch(`${base}/expenses/export.csv`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/^text\/csv/);
+    await expect(res.text()).resolves.toBe('id,description,amountCents,category,spentOn,createdAt\n');
+  });
+
+  it('is not intercepted by GET /expenses/:id', async () => {
+    const res = await fetch(`${base}/expenses/export.csv`);
+    await expect(res.text()).resolves.not.toContain('expense not found');
+  });
+
+  it('exports expenses newest spend first, with amountCents unquoted', async () => {
+    const lunch = await createExpense(LUNCH);
+    const taxi = await createExpense(TAXI);
+
+    const res = await fetch(`${base}/expenses/export.csv`);
+    const text = await res.text();
+    const [header, ...lines] = text.split('\n').filter(Boolean);
+
+    expect(header).toBe('id,description,amountCents,category,spentOn,createdAt');
+    expect(lines).toEqual([
+      `${taxi.id},Airport taxi,3100,travel,2026-08-14,${taxi.createdAt}`,
+      `${lunch.id},Team lunch,4250,food,2026-08-01,${lunch.createdAt}`,
+    ]);
+    expect(text.endsWith('\n')).toBe(true);
+  });
+
+  it('filters by category, case-insensitively', async () => {
+    await createExpense(LUNCH);
+    await createExpense(TAXI);
+
+    const text = await (await fetch(`${base}/expenses/export.csv?category=FOOD`)).text();
+    const lines = text.split('\n').filter(Boolean);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain('Team lunch');
+  });
+
+  it('filters by date range inclusively', async () => {
+    await createExpense(LUNCH);
+    await createExpense(TAXI);
+
+    const text = await (await fetch(`${base}/expenses/export.csv?from=2026-08-01&to=2026-08-01`)).text();
+    const lines = text.split('\n').filter(Boolean);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain('2026-08-01');
+  });
+
+  it('rejects a malformed date filter', async () => {
+    const res = await fetch(`${base}/expenses/export.csv?from=yesterday`);
+    expect(res.status).toBe(400);
+    await expect(readJson(res)).resolves.toMatchObject({ error: 'invalid query' });
+  });
+
+  it('quotes and escapes fields containing a comma, quote, or newline', async () => {
+    const created = await createExpense({
+      description: 'Client dinner, "fancy" place\nwith wine',
+      amountCents: 9999,
+      category: 'food',
+      spentOn: '2026-08-20',
+    });
+
+    const res = await fetch(`${base}/expenses/export.csv`);
+    const body = await res.text();
+    const dataLine = body.split('\n').slice(1).join('\n').trimEnd();
+
+    expect(dataLine).toContain('"Client dinner, ""fancy"" place\nwith wine"');
+
+    // A standard CSV parse should recover the original description.
+    const match = dataLine.match(/^[^,]+,"((?:[^"]|"")*)",/s);
+    expect(match?.[1]?.replace(/""/g, '"')).toBe('Client dinner, "fancy" place\nwith wine');
+    expect(created.description).toBe('Client dinner, "fancy" place\nwith wine');
+  });
+});
+
 describe('GET /expenses/:id', () => {
   it('returns the expense', async () => {
     const created = await createExpense(LUNCH);
