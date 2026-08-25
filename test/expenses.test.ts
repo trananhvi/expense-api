@@ -162,6 +162,74 @@ describe('GET /expenses/export.csv', () => {
     await expect(readJson(res)).resolves.toMatchObject({ error: 'invalid query' });
   });
 
+  it('rejects a malformed "to" date filter', async () => {
+    const res = await fetch(`${base}/expenses/export.csv?to=not-a-date`);
+    expect(res.status).toBe(400);
+    await expect(readJson(res)).resolves.toMatchObject({ error: 'invalid query' });
+    expect(res.headers.get('content-type')).not.toMatch(/^text\/csv/);
+  });
+
+  it('rejects an empty category filter', async () => {
+    const res = await fetch(`${base}/expenses/export.csv?category=`);
+    expect(res.status).toBe(400);
+    await expect(readJson(res)).resolves.toMatchObject({ error: 'invalid query' });
+  });
+
+  it('breaks ties on equal spentOn by newest createdAt first', async () => {
+    const first = await createExpense({ ...LUNCH, spentOn: '2026-08-01' });
+    // createdAt has millisecond resolution; force it to differ from `first`.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = await createExpense({ ...TAXI, spentOn: '2026-08-01' });
+    expect(second.createdAt > first.createdAt).toBe(true);
+
+    const res = await fetch(`${base}/expenses/export.csv`);
+    const lines = (await res.text()).split('\n').filter(Boolean);
+
+    expect(lines).toEqual([
+      'id,description,amountCents,category,spentOn,createdAt',
+      `${second.id},Airport taxi,3100,travel,2026-08-01,${second.createdAt}`,
+      `${first.id},Team lunch,4250,food,2026-08-01,${first.createdAt}`,
+    ]);
+  });
+
+  it('quotes a field containing only a comma', async () => {
+    const created = await createExpense({ ...LUNCH, description: 'Coffee, tea' });
+
+    const text = await (await fetch(`${base}/expenses/export.csv`)).text();
+    const dataLine = text.split('\n')[1];
+
+    expect(dataLine).toContain('"Coffee, tea"');
+    expect(dataLine).toBe(
+      `${created.id},"Coffee, tea",4250,food,2026-08-01,${created.createdAt}`,
+    );
+  });
+
+  it('quotes and doubles a field containing only a double quote', async () => {
+    const created = await createExpense({ ...LUNCH, description: 'The "usual" order' });
+
+    const text = await (await fetch(`${base}/expenses/export.csv`)).text();
+    const dataLine = text.split('\n')[1];
+
+    expect(dataLine).toBe(
+      `${created.id},"The ""usual"" order",4250,food,2026-08-01,${created.createdAt}`,
+    );
+  });
+
+  it('quotes a field containing only a newline, and the row round-trips to one record', async () => {
+    const created = await createExpense({ ...LUNCH, description: 'Team lunch\nwith clients' });
+
+    const res = await fetch(`${base}/expenses/export.csv`);
+    const body = await res.text();
+    const dataLine = body.split('\n').slice(1).join('\n').trimEnd();
+
+    expect(dataLine).toBe(
+      `${created.id},"Team lunch\nwith clients",4250,food,2026-08-01,${created.createdAt}`,
+    );
+
+    const match = dataLine.match(/^[^,]+,"((?:[^"]|"")*)",/s);
+    expect(match?.[1]?.replace(/""/g, '"')).toBe('Team lunch\nwith clients');
+  });
+
   it('quotes and escapes fields containing a comma, quote, or newline', async () => {
     const created = await createExpense({
       description: 'Client dinner, "fancy" place\nwith wine',
