@@ -1,0 +1,10 @@
+{
+  "testCommand": "npm test",
+  "installCommand": "npm install",
+  "typecheckCommand": "npm run typecheck",
+  "conventionsFile": "CONVENTIONS.md",
+  "branchPrefix": "auto/",
+  "artifactDir": ".autosdlc",
+  "entryPoints": ["src/app.ts", "src/routes/expenses.ts", "src/store.ts"],
+  "protectedPaths": ["autosdlc.target.json", "CONVENTIONS.md", ".gitattributes"]
+}
