@@ -1,8 +1,9 @@
 import { Router } from 'express';
-import type { ExpenseStore } from '../store.ts';
+import type { ExpenseStore, LimitStore } from '../store.ts';
+import { computeUsage } from '../store.ts';
 import { ExpenseQuerySchema, NewExpenseSchema } from '../types.ts';
 
-export function expensesRouter(store: ExpenseStore): Router {
+export function expensesRouter(store: ExpenseStore, limitStore: LimitStore): Router {
   const router = Router();
 
   router.post('/', (req, res) => {
@@ -10,7 +11,27 @@ export function expensesRouter(store: ExpenseStore): Router {
     if (!parsed.success) {
       return res.status(400).json({ error: 'invalid expense', details: parsed.error.issues });
     }
-    return res.status(201).json(store.create(parsed.data));
+
+    const expense = store.create(parsed.data);
+
+    if (limitStore.get(expense.category)) {
+      const month = expense.spentOn.slice(0, 7);
+      const usage = computeUsage(store, limitStore, month).find((u) => u.category === expense.category);
+      if (usage && usage.spentCents > usage.limitCents) {
+        return res.status(201).json({
+          ...expense,
+          warning: {
+            category: usage.category,
+            month,
+            limitCents: usage.limitCents,
+            spentCents: usage.spentCents,
+            overByCents: usage.spentCents - usage.limitCents,
+          },
+        });
+      }
+    }
+
+    return res.status(201).json(expense);
   });
 
   router.get('/', (req, res) => {
