@@ -100,6 +100,22 @@ describe('POST /auth/login', () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it('returns 400 when username is missing entirely', async () => {
+    const res = await login({ password: 'demo-password' });
+    expect(res.status).toBe(400);
+    const body = await readJson<{ error: string; details: unknown }>(res);
+    expect(body.error).toBeDefined();
+    expect(body.details).toBeDefined();
+  });
+
+  it('returns 400, not 401, when username is a number', async () => {
+    const res = await login({ username: 12345, password: 'demo-password' });
+    expect(res.status).toBe(400);
+    const body = await readJson<{ error: string; details: unknown }>(res);
+    expect(body.error).toBeDefined();
+    expect(body.details).toBeDefined();
+  });
 });
 
 describe('GET /auth/login', () => {
@@ -121,5 +137,73 @@ describe('CredentialStore (HTTP-free)', () => {
     const store = new CredentialStore({ username: 'demo', password: 'demo-password' });
     expect(() => store.verify('nobody', 'whatever')).not.toThrow();
     expect(store.verify('nobody', 'whatever')).toBeUndefined();
+  });
+});
+
+describe('createApp credentialStore wiring', () => {
+  it('accepts an injected credentialStore in AppDeps, returns it, and uses it to authenticate', async () => {
+    const injected = new CredentialStore({ username: 'injected-user', password: 'injected-pass' });
+    const created = createApp({ credentialStore: injected });
+    expect(created.credentialStore).toBe(injected);
+
+    const server = await new Promise<Server>((resolve) => {
+      const s = created.app.listen(0, () => resolve(s));
+    });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'injected-user', password: 'injected-pass' }),
+      });
+      expect(res.status).toBe(200);
+      const body = await readJson<{ username: string }>(res);
+      expect(body.username).toBe('injected-user');
+
+      const rejected = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'demo', password: 'demo-password' }),
+      });
+      expect(rejected.status).toBe(401);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('falls back to AUTH_USERNAME / AUTH_PASSWORD env vars when no credentialStore is injected', async () => {
+    const prevUsername = process.env.AUTH_USERNAME;
+    const prevPassword = process.env.AUTH_PASSWORD;
+    process.env.AUTH_USERNAME = 'env-user';
+    process.env.AUTH_PASSWORD = 'env-pass';
+
+    let server: Server | undefined;
+    try {
+      const created = createApp();
+      server = await new Promise<Server>((resolve) => {
+        const s = created.app.listen(0, () => resolve(s));
+      });
+      const { port } = server.address() as AddressInfo;
+
+      const res = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'env-user', password: 'env-pass' }),
+      });
+      expect(res.status).toBe(200);
+
+      const defaultCredsRejected = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'demo', password: 'demo-password' }),
+      });
+      expect(defaultCredsRejected.status).toBe(401);
+    } finally {
+      if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+      if (prevUsername === undefined) delete process.env.AUTH_USERNAME;
+      else process.env.AUTH_USERNAME = prevUsername;
+      if (prevPassword === undefined) delete process.env.AUTH_PASSWORD;
+      else process.env.AUTH_PASSWORD = prevPassword;
+    }
   });
 });
