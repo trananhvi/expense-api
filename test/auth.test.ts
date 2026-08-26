@@ -194,6 +194,13 @@ describe('GET /auth/session', () => {
     expect(res.status).toBe(401);
   });
 
+  it('returns 401, not 500, for a header using the wrong scheme', async () => {
+    const res = await getSession('Basic xyz');
+    expect(res.status).toBe(401);
+    const body = await readJson<{ error: string }>(res);
+    expect(body.error).toBeDefined();
+  });
+
   it('returns 401 for a well-formed but unknown bearer token', async () => {
     const res = await getSession('Bearer 00000000-0000-0000-0000-000000000000');
     expect(res.status).toBe(401);
@@ -236,6 +243,20 @@ describe('POST /auth/logout', () => {
   it('returns 401 with no Authorization header', async () => {
     const res = await logout();
     expect(res.status).toBe(401);
+  });
+
+  it('returns 401, not 500, for a header missing the Bearer prefix', async () => {
+    const res = await logout('not-a-real-token');
+    expect(res.status).toBe(401);
+    const body = await readJson<{ error: string }>(res);
+    expect(body.error).toBeDefined();
+  });
+
+  it('returns 401, not 500, for a header using the wrong scheme', async () => {
+    const res = await logout('Basic xyz');
+    expect(res.status).toBe(401);
+    const body = await readJson<{ error: string }>(res);
+    expect(body.error).toBeDefined();
   });
 });
 
@@ -366,6 +387,12 @@ describe('createApp sessionStore wiring', () => {
       const { token } = await readJson<{ token: string }>(loginRes);
       expect(injected.size).toBe(1);
       expect(injected.get(token)).toEqual({ username: 'demo' });
+
+      injected.clear();
+      const rejected = await fetch(`http://127.0.0.1:${port}/auth/session`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(rejected.status).toBe(401);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
