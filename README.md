@@ -43,7 +43,12 @@ An expense is stored in **integer cents** and dated with an ISO-8601 date string
 | `GET`    | `/limits`        | List all limits, sorted by category                        |
 | `DELETE` | `/limits/:category` | Delete one, `204` on success or `404`                   |
 | `GET`    | `/limits/usage`  | Month-to-date usage per limit. Optional `month=YYYY-MM` query param, defaults to the current calendar month |
-| `POST`   | `/auth/login`    | Validate a username/password against the predefined credential, `200` with `{ username }` or `401` |
+| `POST`   | `/auth/login`    | Validate a username/password against the predefined credential, `200` with `{ token, username }` or `401` |
+| `GET`    | `/auth/session`  | Look up the session for `Authorization: Bearer <token>`, `200` with `{ username }` or `401` |
+| `POST`   | `/auth/logout`   | Revoke a session for `Authorization: Bearer <token>`, `204` on success or `401` |
+
+Sessions are held in an in-memory `SessionStore` — nothing is persisted, so
+restarting the process invalidates every token.
 
 ## Conventions
 
