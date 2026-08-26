@@ -244,6 +244,14 @@ describe('GET /limits/usage', () => {
     expect(body.details).toBeDefined();
   });
 
+  it('rejects a well-formed month with an out-of-range month number', async () => {
+    const res = await getUsage('month=2026-13');
+    expect(res.status).toBe(400);
+    const body = await readJson<{ error: string; details: unknown }>(res);
+    expect(body.error).toBeDefined();
+    expect(body.details).toBeDefined();
+  });
+
   it('matches categories case-insensitively end to end', async () => {
     await putLimit('FOOD', { amountCents: 50000 });
     await postExpense({ description: 'lunch', amountCents: 1200, category: 'Food', spentOn: '2026-08-01' });
@@ -258,5 +266,37 @@ describe('GET /limits/usage', () => {
     expect(res.status).toBe(200);
     const body = await readJson<{ month: string }>(res);
     expect(body.month).toBe(currentMonth);
+  });
+
+  it('computes spentCents for the current month when the query param is omitted', async () => {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    await putLimit('food', { amountCents: 50000 });
+    await postExpense({ description: 'lunch', amountCents: 1200, category: 'food', spentOn: `${currentMonth}-01` });
+
+    const { usage } = await readJson<{ usage: Usage[] }>(await getUsage());
+    expect(usage).toEqual([{ category: 'food', limitCents: 50000, spentCents: 1200, remainingCents: 48800, overBy: 0 }]);
+  });
+
+  it('returns an empty usage array when no limits are configured, regardless of existing expenses', async () => {
+    await postExpense({ description: 'lunch', amountCents: 4250, category: 'food', spentOn: '2026-08-01' });
+    await postExpense({ description: 'flight', amountCents: 30000, category: 'travel', spentOn: '2026-08-02' });
+
+    const res = await getUsage('month=2026-08');
+    expect(res.status).toBe(200);
+    const body = await readJson<{ month: string; usage: Usage[] }>(res);
+    expect(body).toEqual({ month: '2026-08', usage: [] });
+  });
+});
+
+describe('computeUsage (HTTP-free)', () => {
+  it('is importable and callable without going through the HTTP layer', async () => {
+    const { computeUsage } = await import('../src/store.ts');
+    limitStore.set('food', 50000);
+    expenseStore.create({ description: 'lunch', amountCents: 1200, category: 'food', spentOn: '2026-08-01' });
+
+    const usage = computeUsage(expenseStore, limitStore, '2026-08');
+    expect(usage).toEqual([
+      { category: 'food', limitCents: 50000, spentCents: 1200, remainingCents: 48800, overBy: 0 },
+    ]);
   });
 });
