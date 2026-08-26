@@ -116,6 +116,39 @@ export class CredentialStore {
 }
 
 /**
+ * In-memory session storage, mapping opaque tokens to usernames.
+ *
+ * Pure and synchronous, mirroring the other stores: nothing here throws for
+ * an unknown token — callers get `undefined` (CONVENTIONS.md rule 2). Nothing
+ * is persisted, so restarting the process clears every session.
+ */
+export class SessionStore {
+  readonly #byToken = new Map<string, { username: string }>();
+
+  issue(username: string): string {
+    const token = randomUUID();
+    this.#byToken.set(token, { username });
+    return token;
+  }
+
+  get(token: string): { username: string } | undefined {
+    return this.#byToken.get(token);
+  }
+
+  revoke(token: string): boolean {
+    return this.#byToken.delete(token);
+  }
+
+  clear(): void {
+    this.#byToken.clear();
+  }
+
+  get size(): number {
+    return this.#byToken.size;
+  }
+}
+
+/**
  * Month-to-date usage per configured limit, derived on the fly from the
  * expense store rather than kept as a running counter — deleting an expense
  * frees up budget with no extra bookkeeping. HTTP-free (CONVENTIONS.md).
