@@ -22,7 +22,7 @@ export function createApp({ store = new ExpenseStore(), limitStore = new LimitSt
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
   app.use('/expenses', expensesRouter(store));
-  app.use('/limits', limitsRouter(limitStore));
+  app.use('/limits', limitsRouter(limitStore, store));
 
   app.use((_req, res) => res.status(404).json({ error: 'not found' }));
 

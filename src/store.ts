@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Expense, ExpenseQuery, NewExpense, SpendingLimit } from './types.ts';
+import type { CategoryUsage, Expense, ExpenseQuery, NewExpense, SpendingLimit } from './types.ts';
 
 /**
  * In-memory expense storage.
@@ -84,4 +84,28 @@ export class LimitStore {
   get size(): number {
     return this.#byCategory.size;
   }
+}
+
+/**
+ * Month-to-date usage per configured limit, derived on the fly from the
+ * expense store rather than kept as a running counter — deleting an expense
+ * frees up budget with no extra bookkeeping. HTTP-free (CONVENTIONS.md).
+ */
+export function computeUsage(expenseStore: ExpenseStore, limitStore: LimitStore, month: string): CategoryUsage[] {
+  const spentByCategory = new Map<string, number>();
+  for (const expense of expenseStore.list()) {
+    if (expense.spentOn.slice(0, 7) !== month) continue;
+    spentByCategory.set(expense.category, (spentByCategory.get(expense.category) ?? 0) + expense.amountCents);
+  }
+
+  return limitStore.list().map((limit) => {
+    const spentCents = spentByCategory.get(limit.category) ?? 0;
+    return {
+      category: limit.category,
+      limitCents: limit.amountCents,
+      spentCents,
+      remainingCents: Math.max(0, limit.amountCents - spentCents),
+      overBy: Math.max(0, spentCents - limit.amountCents),
+    };
+  });
 }

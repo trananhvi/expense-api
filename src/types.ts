@@ -39,3 +39,20 @@ export type NewLimit = z.infer<typeof NewLimitSchema>;
 export interface SpendingLimit extends NewLimit {
   category: string;
 }
+
+export const UsageQuerySchema = z.object({
+  month: z
+    .string()
+    .regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'must be an ISO-8601 month (YYYY-MM)')
+    .optional(),
+});
+
+export type UsageQuery = z.infer<typeof UsageQuerySchema>;
+
+export interface CategoryUsage {
+  category: string;
+  limitCents: number;
+  spentCents: number;
+  remainingCents: number;
+  overBy: number;
+}

@@ -42,9 +42,7 @@ An expense is stored in **integer cents** and dated with an ISO-8601 date string
 | `PUT`    | `/limits/:category` | Upsert a monthly spending limit, `200` with the stored limit |
 | `GET`    | `/limits`        | List all limits, sorted by category                        |
 | `DELETE` | `/limits/:category` | Delete one, `204` on success or `404`                   |
-
-There is deliberately **no reporting, aggregation, or export** yet. That is what
-the first AutoSDLC epic adds.
+| `GET`    | `/limits/usage`  | Month-to-date usage per limit. Optional `month=YYYY-MM` query param, defaults to the current calendar month |
 
 ## Conventions
 
