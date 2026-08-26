@@ -1,9 +1,20 @@
 import { Router } from 'express';
-import type { LimitStore } from '../store.ts';
-import { NewLimitSchema } from '../types.ts';
+import type { ExpenseStore, LimitStore } from '../store.ts';
+import { computeUsage } from '../store.ts';
+import { NewLimitSchema, UsageQuerySchema } from '../types.ts';
 
-export function limitsRouter(store: LimitStore): Router {
+export function limitsRouter(store: LimitStore, expenseStore: ExpenseStore): Router {
   const router = Router();
+
+  router.get('/usage', (req, res) => {
+    const parsed = UsageQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'invalid query', details: parsed.error.issues });
+    }
+
+    const month = parsed.data.month ?? new Date().toISOString().slice(0, 7);
+    return res.json({ month, usage: computeUsage(expenseStore, store, month) });
+  });
 
   router.put('/:category', (req, res) => {
     const category = req.params.category.trim();

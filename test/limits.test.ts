@@ -49,6 +49,22 @@ function deleteLimit(category: string): Promise<Response> {
   return fetch(`${base}/limits/${category}`, { method: 'DELETE' });
 }
 
+function getUsage(query?: string): Promise<Response> {
+  return fetch(`${base}/limits/usage${query ? `?${query}` : ''}`);
+}
+
+function postExpense(body: unknown): Promise<Response> {
+  return fetch(`${base}/expenses`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function deleteExpense(id: string): Promise<Response> {
+  return fetch(`${base}/expenses/${id}`, { method: 'DELETE' });
+}
+
 describe('PUT /limits/:category', () => {
   it('creates a limit and returns it', async () => {
     const res = await putLimit('food', { amountCents: 50000 });
@@ -145,5 +161,142 @@ describe('DELETE /limits/:category', () => {
     expect(res.status).toBe(404);
     const body = await readJson<{ error: string }>(res);
     expect(body.error).toBeDefined();
+  });
+});
+
+interface Usage {
+  category: string;
+  limitCents: number;
+  spentCents: number;
+  remainingCents: number;
+  overBy: number;
+}
+
+describe('GET /limits/usage', () => {
+  it('sums matching expenses for the given month', async () => {
+    await putLimit('food', { amountCents: 50000 });
+    await postExpense({ description: 'lunch', amountCents: 4250, category: 'food', spentOn: '2026-08-01' });
+    await postExpense({ description: 'dinner', amountCents: 3100, category: 'food', spentOn: '2026-08-15' });
+
+    const res = await getUsage('month=2026-08');
+    expect(res.status).toBe(200);
+    const body = await readJson<{ month: string; usage: Usage[] }>(res);
+    expect(body.month).toBe('2026-08');
+    expect(body.usage).toEqual([
+      { category: 'food', limitCents: 50000, spentCents: 7350, remainingCents: 42650, overBy: 0 },
+    ]);
+  });
+
+  it('excludes expenses from a different month', async () => {
+    await putLimit('food', { amountCents: 50000 });
+    await postExpense({ description: 'lunch', amountCents: 4250, category: 'food', spentOn: '2026-07-01' });
+
+    const { usage } = await readJson<{ usage: Usage[] }>(await getUsage('month=2026-08'));
+    expect(usage).toEqual([{ category: 'food', limitCents: 50000, spentCents: 0, remainingCents: 50000, overBy: 0 }]);
+  });
+
+  it('includes a limit with no expenses at spentCents 0', async () => {
+    await putLimit('travel', { amountCents: 20000 });
+
+    const { usage } = await readJson<{ usage: Usage[] }>(await getUsage('month=2026-08'));
+    expect(usage).toEqual([
+      { category: 'travel', limitCents: 20000, spentCents: 0, remainingCents: 20000, overBy: 0 },
+    ]);
+  });
+
+  it('ignores expenses in a category with no configured limit', async () => {
+    await postExpense({ description: 'lunch', amountCents: 4250, category: 'food', spentOn: '2026-08-01' });
+
+    const { usage } = await readJson<{ usage: Usage[] }>(await getUsage('month=2026-08'));
+    expect(usage).toEqual([]);
+  });
+
+  it('caps remainingCents at 0 and reports the excess as overBy when over budget', async () => {
+    await putLimit('food', { amountCents: 5000 });
+    await postExpense({ description: 'feast', amountCents: 8000, category: 'food', spentOn: '2026-08-01' });
+
+    const { usage } = await readJson<{ usage: Usage[] }>(await getUsage('month=2026-08'));
+    expect(usage).toEqual([{ category: 'food', limitCents: 5000, spentCents: 8000, remainingCents: 0, overBy: 3000 }]);
+  });
+
+  it('reflects a deleted expense on the next request', async () => {
+    await putLimit('food', { amountCents: 50000 });
+    const created = await readJson<{ id: string }>(
+      await postExpense({ description: 'lunch', amountCents: 4250, category: 'food', spentOn: '2026-08-01' }),
+    );
+
+    const before = await readJson<{ usage: Usage[] }>(await getUsage('month=2026-08'));
+    expect(before.usage).toHaveLength(1);
+    expect(before.usage[0]?.spentCents).toBe(4250);
+
+    expect((await deleteExpense(created.id)).status).toBe(204);
+
+    const after = await readJson<{ usage: Usage[] }>(await getUsage('month=2026-08'));
+    expect(after.usage).toHaveLength(1);
+    expect(after.usage[0]?.spentCents).toBe(0);
+  });
+
+  it('rejects a malformed month', async () => {
+    const res = await getUsage('month=August');
+    expect(res.status).toBe(400);
+    const body = await readJson<{ error: string; details: unknown }>(res);
+    expect(body.error).toBeDefined();
+    expect(body.details).toBeDefined();
+  });
+
+  it('rejects a well-formed month with an out-of-range month number', async () => {
+    const res = await getUsage('month=2026-13');
+    expect(res.status).toBe(400);
+    const body = await readJson<{ error: string; details: unknown }>(res);
+    expect(body.error).toBeDefined();
+    expect(body.details).toBeDefined();
+  });
+
+  it('matches categories case-insensitively end to end', async () => {
+    await putLimit('FOOD', { amountCents: 50000 });
+    await postExpense({ description: 'lunch', amountCents: 1200, category: 'Food', spentOn: '2026-08-01' });
+
+    const { usage } = await readJson<{ usage: Usage[] }>(await getUsage('month=2026-08'));
+    expect(usage).toEqual([{ category: 'food', limitCents: 50000, spentCents: 1200, remainingCents: 48800, overBy: 0 }]);
+  });
+
+  it('defaults to the current calendar month when omitted', async () => {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const res = await getUsage();
+    expect(res.status).toBe(200);
+    const body = await readJson<{ month: string }>(res);
+    expect(body.month).toBe(currentMonth);
+  });
+
+  it('computes spentCents for the current month when the query param is omitted', async () => {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    await putLimit('food', { amountCents: 50000 });
+    await postExpense({ description: 'lunch', amountCents: 1200, category: 'food', spentOn: `${currentMonth}-01` });
+
+    const { usage } = await readJson<{ usage: Usage[] }>(await getUsage());
+    expect(usage).toEqual([{ category: 'food', limitCents: 50000, spentCents: 1200, remainingCents: 48800, overBy: 0 }]);
+  });
+
+  it('returns an empty usage array when no limits are configured, regardless of existing expenses', async () => {
+    await postExpense({ description: 'lunch', amountCents: 4250, category: 'food', spentOn: '2026-08-01' });
+    await postExpense({ description: 'flight', amountCents: 30000, category: 'travel', spentOn: '2026-08-02' });
+
+    const res = await getUsage('month=2026-08');
+    expect(res.status).toBe(200);
+    const body = await readJson<{ month: string; usage: Usage[] }>(res);
+    expect(body).toEqual({ month: '2026-08', usage: [] });
+  });
+});
+
+describe('computeUsage (HTTP-free)', () => {
+  it('is importable and callable without going through the HTTP layer', async () => {
+    const { computeUsage } = await import('../src/store.ts');
+    limitStore.set('food', 50000);
+    expenseStore.create({ description: 'lunch', amountCents: 1200, category: 'food', spentOn: '2026-08-01' });
+
+    const usage = computeUsage(expenseStore, limitStore, '2026-08');
+    expect(usage).toEqual([
+      { category: 'food', limitCents: 50000, spentCents: 1200, remainingCents: 48800, overBy: 0 },
+    ]);
   });
 });
