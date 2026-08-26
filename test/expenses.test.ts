@@ -159,6 +159,48 @@ describe('POST /expenses limit warnings', () => {
     const body = await readJson<Expense & { warning?: unknown }>(res);
     expect('warning' in body).toBe(false);
   });
+
+  it('warns on a backdated expense that breaches its own month\'s limit while the current month is unaffected', async () => {
+    await putLimit('food', 1000);
+    await post({ description: 'small current lunch', amountCents: 200, category: 'food', spentOn: '2026-08-01' });
+
+    const res = await post({ description: 'backdated feast', amountCents: 1500, category: 'food', spentOn: '2026-06-01' });
+    expect(res.status).toBe(201);
+
+    const body = await readJson<Expense & { warning?: unknown }>(res);
+    expect(body.warning).toEqual({
+      category: 'food',
+      month: '2026-06',
+      limitCents: 1000,
+      spentCents: 1500,
+      overByCents: 500,
+    });
+  });
+
+  it('does not leak the warning field into GET /expenses/:id, GET /expenses, or DELETE after a limit is breached', async () => {
+    await putLimit('food', 1000);
+    const { warning: _warning, ...created } = await createExpense({
+      description: 'feast',
+      amountCents: 5000,
+      category: 'food',
+      spentOn: '2026-08-01',
+    }) as Expense & { warning?: unknown };
+
+    const getOne = await fetch(`${base}/expenses/${created.id}`);
+    expect(getOne.status).toBe(200);
+    const oneBody = await readJson<Expense & { warning?: unknown }>(getOne);
+    expect('warning' in oneBody).toBe(false);
+    expect(oneBody).toEqual(created);
+
+    const { expenses } = await readJson<{ expenses: (Expense & { warning?: unknown })[] }>(await listExpenses());
+    expect(expenses).toHaveLength(1);
+    expect('warning' in expenses[0]!).toBe(false);
+    expect(expenses[0]).toEqual(created);
+
+    const del = await fetch(`${base}/expenses/${created.id}`, { method: 'DELETE' });
+    expect(del.status).toBe(204);
+    expect((await fetch(`${base}/expenses/${created.id}`, { method: 'DELETE' })).status).toBe(404);
+  });
 });
 
 describe('GET /expenses', () => {
