@@ -39,6 +39,9 @@ An expense is stored in **integer cents** and dated with an ISO-8601 date string
 | `GET`    | `/expenses`      | List. Optional `category`, `from`, `to` query filters      |
 | `GET`    | `/expenses/:id`  | Fetch one, or `404`                                        |
 | `DELETE` | `/expenses/:id`  | Delete one, `204` on success or `404`                      |
+| `PUT`    | `/limits/:category` | Upsert a monthly spending limit, `200` with the stored limit |
+| `GET`    | `/limits`        | List all limits, sorted by category                        |
+| `DELETE` | `/limits/:category` | Delete one, `204` on success or `404`                   |
 
 There is deliberately **no reporting, aggregation, or export** yet. That is what
 the first AutoSDLC epic adds.
