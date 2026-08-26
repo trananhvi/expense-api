@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { CategoryUsage, Expense, ExpenseQuery, NewExpense, SpendingLimit } from './types.ts';
 
+export interface Credential {
+  username: string;
+  password: string;
+}
+
 /**
  * In-memory expense storage.
  *
@@ -83,6 +88,30 @@ export class LimitStore {
 
   get size(): number {
     return this.#byCategory.size;
+  }
+}
+
+/**
+ * In-memory credential storage, seeded with a single predefined credential.
+ *
+ * Pure and synchronous, mirroring the other stores: nothing here throws for
+ * an unknown username — callers get `undefined` (CONVENTIONS.md rule 2).
+ * Usernames are matched case-insensitively and trimmed, like categories;
+ * passwords are matched exactly.
+ */
+export class CredentialStore {
+  readonly #byUsername = new Map<string, Credential>();
+
+  constructor(credential: Credential) {
+    this.#byUsername.set(credential.username.trim().toLowerCase(), credential);
+  }
+
+  verify(username: string, password: string): { username: string } | undefined {
+    const credential = this.#byUsername.get(username.trim().toLowerCase());
+    if (!credential || credential.password !== password) {
+      return undefined;
+    }
+    return { username: credential.username };
   }
 }
 
