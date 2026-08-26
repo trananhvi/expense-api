@@ -2,16 +2,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../src/app.ts';
-import type { ExpenseStore } from '../src/store.ts';
+import type { ExpenseStore, LimitStore } from '../src/store.ts';
 import type { Expense } from '../src/types.ts';
 
 let server: Server;
 let store: ExpenseStore;
+let limitStore: LimitStore;
 let base: string;
 
 beforeAll(async () => {
   const created = createApp();
   store = created.store;
+  limitStore = created.limitStore;
   server = await new Promise<Server>((resolve) => {
     const s = created.app.listen(0, () => resolve(s));
   });
@@ -21,7 +23,10 @@ beforeAll(async () => {
 
 afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
-beforeEach(() => store.clear());
+beforeEach(() => {
+  store.clear();
+  limitStore.clear();
+});
 
 /** `fetch().json()` is `unknown` under strict TS; name the shape at the call site. */
 async function readJson<T>(res: Response): Promise<T> {
@@ -33,6 +38,14 @@ function post(body: unknown): Promise<Response> {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+  });
+}
+
+function putLimit(category: string, amountCents: number): Promise<Response> {
+  return fetch(`${base}/limits/${category}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ amountCents }),
   });
 }
 
@@ -75,6 +88,118 @@ describe('POST /expenses', () => {
   it('rejects a malformed date', async () => {
     const res = await post({ ...LUNCH, spentOn: '01/08/2026' });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /expenses limit warnings', () => {
+  it('warns with overByCents when the new expense pushes the month-to-date total over the limit', async () => {
+    await putLimit('food', 5000);
+    await post({ description: 'earlier lunch', amountCents: 4000, category: 'food', spentOn: '2026-08-01' });
+
+    const res = await post({ description: 'second lunch', amountCents: 2000, category: 'food', spentOn: '2026-08-02' });
+    expect(res.status).toBe(201);
+
+    const body = await readJson<Expense & { warning?: unknown }>(res);
+    expect(body.description).toBe('second lunch');
+    expect(body.warning).toEqual({
+      category: 'food',
+      month: '2026-08',
+      limitCents: 5000,
+      spentCents: 6000,
+      overByCents: 1000,
+    });
+
+    const { expenses } = await readJson<{ expenses: Expense[] }>(await listExpenses());
+    expect(expenses).toHaveLength(2);
+  });
+
+  it('omits warning when the running total lands exactly on the limit', async () => {
+    await putLimit('food', 5000);
+    await post({ description: 'earlier lunch', amountCents: 3000, category: 'food', spentOn: '2026-08-01' });
+
+    const res = await post({ description: 'second lunch', amountCents: 2000, category: 'food', spentOn: '2026-08-02' });
+    expect(res.status).toBe(201);
+
+    const body = await readJson<Expense & { warning?: unknown }>(res);
+    expect(body.warning).toBeUndefined();
+    expect('warning' in body).toBe(false);
+  });
+
+  it('omits warning for a category with no limit set', async () => {
+    const res = await post(LUNCH);
+    expect(res.status).toBe(201);
+
+    const body = await readJson<Expense & { warning?: unknown }>(res);
+    expect('warning' in body).toBe(false);
+  });
+
+  it('warns on a single expense that alone exceeds the limit', async () => {
+    await putLimit('food', 1000);
+
+    const res = await post({ description: 'feast', amountCents: 5000, category: 'food', spentOn: '2026-08-01' });
+    expect(res.status).toBe(201);
+
+    const body = await readJson<Expense & { warning?: unknown }>(res);
+    expect(body.warning).toEqual({
+      category: 'food',
+      month: '2026-08',
+      limitCents: 1000,
+      spentCents: 5000,
+      overByCents: 4000,
+    });
+  });
+
+  it('checks the month of the expense\'s own spentOn, not the current month', async () => {
+    await putLimit('food', 1000);
+    await post({ description: 'this month feast', amountCents: 5000, category: 'food', spentOn: '2026-08-01' });
+
+    const res = await post({ description: 'backdated lunch', amountCents: 500, category: 'food', spentOn: '2026-06-01' });
+    expect(res.status).toBe(201);
+
+    const body = await readJson<Expense & { warning?: unknown }>(res);
+    expect('warning' in body).toBe(false);
+  });
+
+  it('warns on a backdated expense that breaches its own month\'s limit while the current month is unaffected', async () => {
+    await putLimit('food', 1000);
+    await post({ description: 'small current lunch', amountCents: 200, category: 'food', spentOn: '2026-08-01' });
+
+    const res = await post({ description: 'backdated feast', amountCents: 1500, category: 'food', spentOn: '2026-06-01' });
+    expect(res.status).toBe(201);
+
+    const body = await readJson<Expense & { warning?: unknown }>(res);
+    expect(body.warning).toEqual({
+      category: 'food',
+      month: '2026-06',
+      limitCents: 1000,
+      spentCents: 1500,
+      overByCents: 500,
+    });
+  });
+
+  it('does not leak the warning field into GET /expenses/:id, GET /expenses, or DELETE after a limit is breached', async () => {
+    await putLimit('food', 1000);
+    const { warning: _warning, ...created } = await createExpense({
+      description: 'feast',
+      amountCents: 5000,
+      category: 'food',
+      spentOn: '2026-08-01',
+    }) as Expense & { warning?: unknown };
+
+    const getOne = await fetch(`${base}/expenses/${created.id}`);
+    expect(getOne.status).toBe(200);
+    const oneBody = await readJson<Expense & { warning?: unknown }>(getOne);
+    expect('warning' in oneBody).toBe(false);
+    expect(oneBody).toEqual(created);
+
+    const { expenses } = await readJson<{ expenses: (Expense & { warning?: unknown })[] }>(await listExpenses());
+    expect(expenses).toHaveLength(1);
+    expect('warning' in expenses[0]!).toBe(false);
+    expect(expenses[0]).toEqual(created);
+
+    const del = await fetch(`${base}/expenses/${created.id}`, { method: 'DELETE' });
+    expect(del.status).toBe(204);
+    expect((await fetch(`${base}/expenses/${created.id}`, { method: 'DELETE' })).status).toBe(404);
   });
 });
 

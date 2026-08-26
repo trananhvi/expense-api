@@ -35,7 +35,7 @@ An expense is stored in **integer cents** and dated with an ISO-8601 date string
 | Method   | Path             | Notes                                                      |
 | -------- | ---------------- | ---------------------------------------------------------- |
 | `GET`    | `/health`        | Liveness check                                             |
-| `POST`   | `/expenses`      | Create. Validates with Zod, returns `201`                  |
+| `POST`   | `/expenses`      | Create. Validates with Zod, returns `201`. If the category has a limit and this expense pushes its month-to-date total (for the month of `spentOn`) over the limit, the body also carries `warning: { category, month, limitCents, spentCents, overByCents }` |
 | `GET`    | `/expenses`      | List. Optional `category`, `from`, `to` query filters      |
 | `GET`    | `/expenses/:id`  | Fetch one, or `404`                                        |
 | `DELETE` | `/expenses/:id`  | Delete one, `204` on success or `404`                      |
